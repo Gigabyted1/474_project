@@ -1,63 +1,130 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from mpl_toolkits import mplot3d
-from multiprocessing import Pool
+import time
+import concurrent.futures as cf
+from numba import njit, prange
 
-G = 6.67408e-11
-ITER = 200
+G_CONST = 6.67408e-11
+SPEED_FACTOR = 1
+G_EFF = G_CONST * SPEED_FACTOR
+# G = .01
+TIME_STEP = 1000000
+NO_STEPS = 1000
+
+# data for our solar system
+sun = {"pos": (0, 0, 0), "m": 2e30, "v": (0, 0, 0)}
+mercury = {"pos": (0, 5.7e10, 0), "m": 3.285e23, "v": (47000, 0, 0)}
+venus = {"pos": (0, 1.1e11, 0), "m": 4.8e24, "v": (35000, 0, 0)}
+earth = {"pos": (0, 1.5e11, 0), "m": 6e24, "v": (30000, 0, 0)}
+mars = {"pos": (0, 2.2e11, 0), "m": 2.4e24, "v": (24000, 0, 0)}
+jupiter = {"pos": (0, 7.7e11, 0), "m": 1e28, "v": (13000, 0, 0)}
+saturn = {"pos": (0, 1.4e12, 0), "m": 5.7e26, "v": (9000, 0, 0)}
+uranus = {"pos": (0, 2.8e12, 0), "m": 8.7e25, "v": (6835, 0, 0)}
+neptune = {"pos": (0, 4.5e12, 0), "m": 1e26, "v": (5477, 0, 0)}
+pluto = {"pos": (0, 3.7e12, 0), "m": 1.3e22, "v": (4748, 0, 0)}
+
+# matrices storing the positions, masses, velocities, and accelerations of the bodies
+pos = np.array([sun['pos'], mercury['pos'], venus['pos'], earth['pos'],
+                mars['pos']])
+m = np.array([sun['m'], mercury['m'], venus['m'], earth['m'],
+              mars['m']])
+v = np.array([sun['v'], mercury['v'], venus['v'], earth['v'],
+              mars['v']])
+
+# figure
+fig = plt.figure()
+axis = fig.add_subplot(111, projection='3d')
 
 
-class Particle:
-    def __init__(self, pos, m, v, a):
-        self.pos = pos
-        self.m = m
-        self.v = v
-        self.a = a
+def calc_acc_ser():
+    # positions for each dimension
+    x = pos[:, 0:1]
+    y = pos[:, 1:2]
+    z = pos[:, 2:3]
+
+    # matrices to store distances between bodies on each dimension
+    x_dist = x.T - x
+    y_dist = y.T - y
+    z_dist = z.T - z
+
+    # using the L2 norm to store real distances
+    r = np.sqrt(x_dist ** 2 + y_dist ** 2 + z_dist ** 2)
+
+    # combining all r terms into one
+    # using only values were r > 0, as the ones where r = 0 cause a division by 0
+    r[r > 0] = r[r > 0] ** -3
+
+    # calculating the acceleration
+    ax = G_EFF * (x_dist * r) @ m
+    ay = G_EFF * (y_dist * r) @ m
+    az = G_EFF * (z_dist * r) @ m
+
+    return np.matrix([ax, ay, az]).T
 
 
-def calc_force(p1, p2):
-    d = np.subtract(p2.pos, p1.pos)
-    return ((G * p1.m * p2.m) / (abs(d) ** 2)) * (d / abs(d))
+@njit(parallel=True)
+def calc_r(x_dist, y_dist, z_dist):
+    r = np.zeros(x_dist.shape)
+    for i in prange(x_dist.shape[0] - 1):
+        for j in prange(x_dist.shape[1] - 1):
+            r[i, j] = (x_dist[i, j] ** 2 + y_dist[i, j] ** 2 + z_dist[i, j] ** 2) ** 0.5
+
+    return r
 
 
-def calc_acceleration(p1, p2):
-    return calc_force(p1, p2) / p1.m
+def calc_acc_par():
+    # positions for each dimension
+    x = pos[:, 0:1]
+    y = pos[:, 1:2]
+    z = pos[:, 2:3]
+
+    # matrices to store distances between bodies on each dimension
+    x_dist = x.T - x
+    y_dist = y.T - y
+    z_dist = z.T - z
+
+    r = calc_r(x_dist, y_dist, z_dist)
+    # r = np.zeros(x_dist.shape)
+    #
+    # print(r)
+    #
+    # for i in prange(x_dist.shape[0] - 1):
+    #     for j in prange(x_dist.shape[1] - 1):
+    #         r[i, j] = (x_dist[i, j] ** 2 + y_dist[i, j] ** 2 + z_dist[i, j] ** 2) ** 0.5
+    #
+    # print(r)
+
+    r[r > 0] = r[r > 0] ** -3
+
+    # calculating the acceleration
+    ax = G_EFF * (x_dist * r) @ m
+    ay = G_EFF * (y_dist * r) @ m
+    az = G_EFF * (z_dist * r) @ m
+
+    return np.matrix([ax, ay, az]).T
 
 
-def plt_test():
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
+def plot_iteration(iteration):
+    plt.title('Iteration: {}'.format(iteration))
 
-    ax.set_xlim(-1000, 1000)
-    ax.set_ylim(-1000, 1000)
-    ax.set_zlim(-1000, 1000)
+    axis.scatter(pos[:, 0], pos[:, 1], pos[:, 2], s=5, color='red')
 
-    particles = []
-    for i in range(0, 2):
-        x = np.random.randint(-10, 10)
-        y = np.random.randint(-10, 10)
-        z = np.random.randint(-10, 10)
-        vx = np.random.randint(-1000, 1000) / 1000
-        vy = np.random.randint(-1000, 1000) / 1000
-        vz = np.random.randint(-1000, 1000) / 1000
-        if i == 0:
-            particles.append(Particle([x, y, z], 99999999, [vx, vy, vz], [0, 0, 0]))
-        else:
-            particles.append(Particle([x, y, z], 99, [vx, vy, vz], [0, 0, 0]))
-
-    for i in range(0, ITER):
-        for j in particles:
-            for k in particles:
-                if j != k:
-                    j.a += calc_acceleration(j, k)
-            j.v += j.a
-            j.pos += j.v
-
-        for j in particles:
-            ax.scatter(j.pos[0], j.pos[1], j.pos[2])
-
-        plt.pause(0.001)
+    max_dist = np.max(abs(pos))
+    axis.set(xlim=(-max_dist, max_dist), ylim=(-max_dist, max_dist), zlim=(-max_dist, max_dist))
 
 
 if __name__ == '__main__':
-    plt_test()
+    v = v.astype(float)
+    time_start = time.time()
+    for i in range(0, NO_STEPS):
+        plt.cla()
+        a = calc_acc_ser()
+        # a = calc_acc_par()
+        v += a * TIME_STEP
+        pos += v * TIME_STEP
+
+        plot_iteration(i)
+        plt.pause(0.001)
+
+    time_end = time.time()
+    print('Time taken: {}'.format(time_end - time_start, 2))
