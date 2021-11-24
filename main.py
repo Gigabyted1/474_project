@@ -1,14 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-import concurrent.futures as cf
 from numba import njit, prange, jit
+from mpl_toolkits.mplot3d import Axes3D
 
 G_CONST = 6.67408e-11
 SPEED_FACTOR = 1
 G_EFF = G_CONST * SPEED_FACTOR
-TIME_STEP = 1
-NO_STEPS = 1200
+TIME_STEP = 1000
+NO_STEPS = 500
+VISUALIZE = True
 run_parallel = False
 
 # data for our solar system
@@ -24,19 +25,22 @@ neptune = {"pos": (0, 4.5e12, 0), "m": 1e26, "v": (5477, 0, 0)}
 pluto = {"pos": (0, 3.7e12, 0), "m": 1.3e22, "v": (4748, 0, 0)}
 
 # matrices storing the positions, masses, and velocities of the bodies
-pos = np.array([sun['pos'], mercury['pos'], venus['pos'], earth['pos'],
-                mars['pos']])
-m = np.array([sun['m'], mercury['m'], venus['m'], earth['m'],
-              mars['m']])
-v = np.array([sun['v'], mercury['v'], venus['v'], earth['v'],
-              mars['v']]).astype(float)
+positions = np.array([sun['pos'], mercury['pos'], venus['pos'], earth['pos'],
+                      mars['pos'], jupiter['pos'], saturn['pos'], uranus['pos'],
+                      neptune['pos'], pluto['pos']])
+masses = np.array([sun['m'], mercury['m'], venus['m'], earth['m'],
+                   mars['m'], jupiter['m'], saturn['m'], uranus['m'],
+                   neptune['m'], pluto['m']])
+velocities = np.array([sun['v'], mercury['v'], venus['v'], earth['v'],
+                       mars['v'], jupiter['v'], saturn['v'], uranus['v'],
+                       neptune['v'], pluto['v']]).astype(np.float64)
 
 # figure
 fig = plt.figure()
 axis = fig.add_subplot(111, projection='3d')
 
 
-def calc_acc_np():
+def calc_acc_np(pos, m):
     # positions for each dimension
     x = pos[:, 0:1]
     y = pos[:, 1:2]
@@ -62,20 +66,23 @@ def calc_acc_np():
     return np.matrix([ax, ay, az]).T
 
 
-@njit(parallel=run_parallel)
-def calc_acc_par():
+@njit(parallel=run_parallel, fastmath=True)
+def calc_acc(pos, m):
     # positions for each dimension
-    x = np.zeros((pos.shape[0]))
-    for i in prange(pos.shape[0]):
-        x[i] = pos[i, 0]
-
-    y = np.zeros((pos.shape[0]))
-    for i in prange(pos.shape[0]):
-        y[i] = pos[i, 1]
-
-    z = np.zeros((pos.shape[0]))
-    for i in prange(pos.shape[0]):
-        z[i] = pos[i, 2]
+    x = pos[:, 0]
+    y = pos[:, 1]
+    z = pos[:, 2]
+    # x = np.zeros((pos.shape[0]))
+    # for i in prange(pos.shape[0]):
+    #     x[i] = pos[i, 0]
+    #
+    # y = np.zeros((pos.shape[0]))
+    # for i in prange(pos.shape[0]):
+    #     y[i] = pos[i, 1]
+    #
+    # z = np.zeros((pos.shape[0]))
+    # for i in prange(pos.shape[0]):
+    #     z[i] = pos[i, 2]
 
     # matrices to store distances between bodies on each dimension
     x_dist = np.zeros((x.shape[0], x.shape[0]))
@@ -111,6 +118,7 @@ def calc_acc_par():
             dy[i, j] += y_dist[i, j] * r[i, j]
             dz[i, j] += z_dist[i, j] * r[i, j]
 
+    # calculating the acceleration and storing in a Nx3 matrix
     acc = np.zeros(pos.shape)
     for i in prange(dx.shape[0]):
         for j in prange(dx.shape[1]):
@@ -123,140 +131,41 @@ def calc_acc_par():
     return acc
 
 
-def calc_acc_ser():
-    # positions for each dimension
-    x = np.zeros((pos.shape[0]))
-    for i in range(pos.shape[0]):
-        x[i] = pos[i, 0]
-
-    y = np.zeros((pos.shape[0]))
-    for i in range(pos.shape[0]):
-        y[i] = pos[i, 1]
-
-    z = np.zeros((pos.shape[0]))
-    for i in range(pos.shape[0]):
-        z[i] = pos[i, 2]
-
-    # matrices to store distances between bodies on each dimension
-    x_dist = np.zeros((x.shape[0], x.shape[0]))
-    for i in range(x.shape[0]):
-        for j in range(x.shape[0]):
-            x_dist[j, i] = x[i] - x[j]
-
-    y_dist = np.zeros((y.shape[0], y.shape[0]))
-    for i in range(y.shape[0]):
-        for j in range(y.shape[0]):
-            y_dist[j, i] = y[i] - y[j]
-
-    z_dist = np.zeros((z.shape[0], z.shape[0]))
-    for i in range(z.shape[0]):
-        for j in range(z.shape[0]):
-            z_dist[j, i] = z[i] - z[j]
-
-    # producing a factor to use for L2 normalized distances
-    r = np.zeros(x_dist.shape)
-    for i in range(r.shape[0]):
-        for j in range(r.shape[1]):
-            r_t = (x_dist[i, j] ** 2 + y_dist[i, j] ** 2 + z_dist[i, j] ** 2) ** 0.5
-            if r_t > 0:
-                r[i, j] = r_t ** -3
-
-    # finding real Euclidean distances
-    dx = np.zeros(r.shape)
-    dy = np.zeros(r.shape)
-    dz = np.zeros(r.shape)
-    for i in range(dx.shape[0]):
-        for j in range(dx.shape[1]):
-            dx[i, j] += x_dist[i, j] * r[i, j]
-            dy[i, j] += y_dist[i, j] * r[i, j]
-            dz[i, j] += z_dist[i, j] * r[i, j]
-
-    acc = np.zeros(pos.shape)
-    for i in range(dx.shape[0]):
-        for j in range(dx.shape[1]):
-            acc[i, 0] += dx[i, j] * m[j]
-            acc[i, 1] += dy[i, j] * m[j]
-            acc[i, 2] += dz[i, j] * m[j]
-        for j in range(pos.shape[1]):
-            acc[i, j] *= G_EFF
-
-    return acc
-
-
-def plot_iteration(iteration):
+def plot_iteration(iteration, pos):
     plt.title('Iteration: {}'.format(iteration))
-
-    axis.scatter(pos[:, 0], pos[:, 1], pos[:, 2], s=5, color='red')
-
     max_dist = np.max(abs(pos))
-    axis.set(xlim=(-max_dist, max_dist), ylim=(-max_dist, max_dist), zlim=(-max_dist, max_dist))
+    axis.set(xlim=(-max_dist, max_dist), ylim=(-max_dist, max_dist), zlim=(-max_dist, max_dist), xlabel='x', ylabel='y',
+             zlabel='z')
+
+    x = pos[:, 0]
+    y = pos[:, 1]
+    z = pos[:, 2]
+    c = np.arange(len(x))       # to create distinct colors for each body
+
+    axis.scatter(x, y, z, s=5, cmap='tab10', c=c)
+    plt.pause(0.001)
 
 
-def run_sim():
-    global v
-    global pos
-
+def run_sim(pos, v):
     print('Simulation start, parallel = {}'.format(run_parallel))
     time_start = time.time()
 
     for step in range(0, NO_STEPS):
         plt.cla()
-        # a = calc_acc_ser()
-        a = calc_acc_par()
+        a = calc_acc(positions, masses)
         v += a * TIME_STEP
         pos += v * TIME_STEP
 
-        plot_iteration(step)
+        if VISUALIZE:
+            plot_iteration(step, pos)
 
     time_end = time.time()
     print('Simulation end, {} elapsed'.format(time_end - time_start, 2))
 
 
 if __name__ == '__main__':
-    test = calc_acc_par()
+    test = calc_acc(positions, masses)
 
-    # run_sim()
-    # run_parallel = True
-    # run_sim()
-
-    print('Simulation start, serial')
-    ts = time.time()
-
-    for step in range(0, NO_STEPS):
-        plt.cla()
-        a = calc_acc_ser()
-        v += a * TIME_STEP
-        pos += v * TIME_STEP
-
-        plot_iteration(step)
-
-    te = time.time()
-    print('Simulation end, {} elapsed'.format(te - ts, 2))
-
-    print('Simulation start, parallel')
-    ts = time.time()
-
-    for step in range(0, NO_STEPS):
-        plt.cla()
-        a = calc_acc_par()
-        v += a * TIME_STEP
-        pos += v * TIME_STEP
-
-        plot_iteration(step)
-
-    te = time.time()
-    print('Simulation end, {} elapsed'.format(te - ts, 2))
-
-    print('Simulation start, numpy')
-    ts = time.time()
-
-    for step in range(0, NO_STEPS):
-        plt.cla()
-        a = calc_acc_np()
-        v += a * TIME_STEP
-        pos += v * TIME_STEP
-
-        plot_iteration(step)
-
-    te = time.time()
-    print('Simulation end, {} elapsed'.format(te - ts, 2))
+    run_sim(positions, velocities)
+    run_parallel = True
+    run_sim(positions, velocities)
