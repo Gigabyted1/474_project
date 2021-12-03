@@ -1,14 +1,15 @@
+import sys
+
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-from numba import njit, prange, jit
-from mpl_toolkits.mplot3d import Axes3D
+from numba import njit, prange
 
 G_CONST = 6.67408e-11
 SPEED_FACTOR = 1
 G_EFF = G_CONST * SPEED_FACTOR
-TIME_STEP = 1
-NO_STEPS = 10000
+TIME_STEP = 1000
+NO_STEPS = 15000
 VISUALIZE = False
 
 # data for our solar system
@@ -23,16 +24,22 @@ uranus = {"pos": (0, 2.8e12, 0), "m": 8.7e25, "v": (6835, 0, 0)}
 neptune = {"pos": (0, 4.5e12, 0), "m": 1e26, "v": (5477, 0, 0)}
 pluto = {"pos": (0, 3.7e12, 0), "m": 1.3e22, "v": (4748, 0, 0)}
 
-# matrices storing the positions, masses, and velocities of the bodies
-positions = np.array([sun['pos'], mercury['pos'], venus['pos'], earth['pos'],
-                      mars['pos'], jupiter['pos'], saturn['pos'], uranus['pos'],
-                      neptune['pos'], pluto['pos']], dtype=np.float64)
-masses = np.array([sun['m'], mercury['m'], venus['m'], earth['m'],
-                   mars['m'], jupiter['m'], saturn['m'], uranus['m'],
-                   neptune['m'], pluto['m']], dtype=np.float64)
-velocities = np.array([sun['v'], mercury['v'], venus['v'], earth['v'],
-                       mars['v'], jupiter['v'], saturn['v'], uranus['v'],
-                       neptune['v'], pluto['v']], dtype=np.float64)
+# planet presets
+terrestrial_planets = [mercury, venus, earth, mars]
+jovian_planets = [jupiter, saturn, uranus, neptune]
+all_planets = terrestrial_planets + jovian_planets
+
+# change this to change the utilized bodies
+BODIES = [sun] + all_planets
+
+# load body data
+positions = np.zeros((len(BODIES), 3))
+velocities = np.zeros((len(BODIES), 3))
+masses = np.zeros(len(BODIES))
+for i in range(len(BODIES)):
+    positions[i] = BODIES[i]["pos"]
+    velocities[i] = BODIES[i]["v"]
+    masses[i] = BODIES[i]["m"]
 
 # figure
 fig = plt.figure()
@@ -132,6 +139,7 @@ def time_step(pos, vel, acc, ts=TIME_STEP):
 
 
 def plot_iteration(iteration, pos):
+    plt.cla()
     plt.title('Iteration: {}'.format(iteration))
     max_dist = np.max(abs(pos))
     axis.set(xlim=(-max_dist, max_dist), ylim=(-max_dist, max_dist), zlim=(-max_dist, max_dist), xlabel='x', ylabel='y',
@@ -142,14 +150,12 @@ def plot_iteration(iteration, pos):
     z = pos[:, 2]
     c = np.arange(len(x))  # to create distinct colors for each body
 
-    plt.cla()
     axis.scatter(x, y, z, s=5, cmap='tab10', c=c)
     plt.pause(0.0001)
 
 
 def run_sim_ser(pos, m, v):
     t = 0
-    print('Simulation start, serial')
     for i in range(NO_STEPS):
         time_start = time.time()
 
@@ -173,13 +179,17 @@ def run_sim_ser(pos, m, v):
 
         time_end = time.time()
         t += time_end - time_start
-    print('{} iterations, average runtime: {}'.format(NO_STEPS, t / NO_STEPS))
+    print('[SER] Average runtime per iter: {:.2e}s'.format(t / NO_STEPS))
+    if t > .01:
+        print('[SER] Total runtime: {:.2f}s'.format(t))
+    else:
+        print('[SER] Total runtime: {:.2e}s'.format(t))
     return t
 
 
 def run_sim_par(pos, m, v):
     t = 0
-    print('Simulation start, parallel')
+    numba_t = 0
     for i in range(1000):
         time_start = time.time()
 
@@ -203,12 +213,20 @@ def run_sim_par(pos, m, v):
 
         time_end = time.time()
         t += time_end - time_start
-    print('{} iterations, average runtime: {}'.format(NO_STEPS, t / NO_STEPS))
+        if i == 0:
+            numba_t = t
+    print('[PAR] Average runtime per iter: {:.2e}s'.format(t / NO_STEPS))
+    if t > .01:
+        print('[PAR] Total runtime: {:.2f}s'.format(t))
+    else:
+        print('[PAR] Total runtime: {:.2e}s'.format(t))
+    print('[PAR] Time spent on first iter: {:.2f}s.'.format(numba_t))
+    print('[PAR] Average runtime per iter, minus first iter: {:.2e}s'.format((t - numba_t) / (NO_STEPS - 1)))
     return t
 
 
 def run_sim(pos, m, v):
-    for i in range(1000):
+    for i in range(sys.maxsize):
         x_test = positions[:, 0]
         y_test = positions[:, 1]
         z_test = positions[:, 2]
@@ -236,6 +254,7 @@ if __name__ == '__main__':
         run_sim(positions, masses, velocities)
     # run sim in serial, then parallel, then compare
     else:
+        print('Running sim with {} iterations'.format(NO_STEPS))
         time_ser = run_sim_ser(positions, masses, velocities)
         time_par = run_sim_par(positions, masses, velocities)
-        print('Parallel speedup: {}'.format(time_ser / time_par))
+        print('Parallel speedup: {:.3f}'.format(time_ser / time_par))
