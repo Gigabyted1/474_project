@@ -7,9 +7,9 @@ from mpl_toolkits.mplot3d import Axes3D
 G_CONST = 6.67408e-11
 SPEED_FACTOR = 1
 G_EFF = G_CONST * SPEED_FACTOR
-TIME_STEP = 10000
-NO_STEPS = 500
-VISUALIZE = True
+TIME_STEP = 1
+NO_STEPS = 10000
+VISUALIZE = False
 
 # data for our solar system
 sun = {"pos": (0, 0, 0), "m": 2e30, "v": (0, 0, 0)}
@@ -231,13 +231,6 @@ def run_sim(pos, m, v):
 
 
 if __name__ == '__main__':
-    # numba initial mapping
-    tmp1 = calc_dist_jit(positions[:, 0])
-    tmp2 = calc_r_jit(tmp1, tmp1, tmp1)
-    tmp3 = calc_real_dist_jit(tmp2, tmp1)
-    tmp4 = find_acc_jit(tmp3, tmp3, tmp3, masses, positions)
-    time_step_jit(positions, velocities, tmp4)
-
     # run sim with visualization
     if VISUALIZE:
         run_sim(positions, masses, velocities)
